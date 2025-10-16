@@ -32,7 +32,7 @@ This repository documents the setup of a complete CI/CD pipeline that automates 
 
 The primary goal is to build a robust, automated pipeline that eliminates manual deployment tasks. The system monitors a GitHub repository and, upon detecting a change, securely fetches the latest code, transfers it to a web server, and makes the updates live. This project serves as a practical demonstration of modern DevOps principles.
 
-**Live Site URL:** `http://<YOUR_EC2_ELASTIC_IP>`
+**Live Site URL:** `http://<your_ec2_elastic_ip>`
 
 ---
 
@@ -44,177 +44,224 @@ The flow of the pipeline is as follows:
 2.  A **GitHub Webhook** instantly triggers the **Jenkins Pipeline**.
 3.  The **Jenkins Master** (running in a Docker container) orchestrates the job.
 4.  It delegates the execution to the **Jenkins Agent** running on the **AWS EC2 Instance** via a secure SSH connection.
-5.  The agent pulls the source code, copies the web files (`index.html`, `styles.css`) to the Apache webroot, and restarts the Apache service.
-6.  The **user** can immediately see the updated website.
+5.  The **Jenkins Agent** clones the latest code from GitHub and deploys it to the **Apache Web Server** running on the EC2 instance.
+6.  The **Live Website** is updated and available at the Elastic IP address.
 
-![Architecture Diagram](assets/architecture-diagram.png)
-
----
-
-## ✨ Core Features
-
-* **Zero-Touch Deployment:** Fully automated builds and deployments triggered by `git push`.
-* **Infrastructure as Code (IaC):** The pipeline is defined in a `Jenkinsfile`, making it version-controlled, reproducible, and transparent.
-* **Scalable Jenkins Architecture:** Utilizes a master/agent model, allowing the addition of more agents for different environments or tasks.
-* **Secure by Design:** Employs SSH key-pair authentication for secure, passwordless communication between the master and agent.
-* **Containerized & Portable:** Jenkins runs in a Docker container, making it easy to set up, backup, and migrate.
+![Architecture Diagram](assets/screenshot-2025-10-16-18-25-41.png)
+*CI/CD Pipeline Architecture showing the complete workflow from GitHub to live deployment*
 
 ---
 
-## 🛠️ Technology Stack
+## ⚡ Core Features
 
-| Component           | Technology                                                                                                                                                             |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Cloud Provider** | **AWS** (EC2, Elastic IP, Security Groups)                                                                                                                             |
-| **CI/CD Tool** | **Jenkins** |
-| **Containerization**| **Docker** |
-| **Version Control** | **Git & GitHub** |
-| **Web Server** | **Apache2** |
-| **OS / Environment**| **Ubuntu 22.04 LTS** |
-| **Scripting** | **Groovy** (Declarative Pipeline), **Shell Script** |
+*   **Automated Build & Deploy**: Code changes are automatically detected and deployed without manual intervention.
+*   **Containerized Jenkins**: The Jenkins Master runs in Docker, ensuring portability and easy replication.
+*   **SSH-Based Agent**: The EC2 instance acts as a Jenkins agent, securely connected via SSH.
+*   **Webhook Integration**: GitHub webhooks trigger the pipeline instantly upon code commits.
+*   **Elastic IP**: The website uses a static Elastic IP address for consistent access.
 
 ---
 
-## ✅ Prerequisites
+## 🛠 Technology Stack
 
-Before you begin, ensure you have the following:
-* An **AWS Account** with permissions to create EC2 instances and security groups.
-* **Git** installed on your local machine.
-* **Docker Desktop** installed and running on your local machine.
-* A **GitHub Account** and a new repository for this project.
-* A code editor like **VS Code**.
+*   **Cloud Provider**: AWS (EC2, Elastic IP)
+*   **CI/CD Tool**: Jenkins
+*   **Containerization**: Docker
+*   **Version Control**: GitHub
+*   **Web Server**: Apache (on EC2)
+*   **Operating System**: Ubuntu (on EC2)
+*   **Scripting**: Groovy (Jenkinsfile), Bash
 
 ---
 
-## 🔧 Step-by-Step Configuration Guide
+## 📝 Prerequisites
+
+Before starting, ensure you have the following:
+
+*   An **AWS account** with permissions to launch EC2 instances and allocate Elastic IPs.
+*   A **GitHub account** to host your repository.
+*   **Docker** installed on your local machine (for Jenkins Master).
+*   Basic knowledge of **Git**, **SSH**, and **Linux commands**.
+
+---
+
+## 🚀 Step-by-Step Configuration Guide
 
 ### Part 1: AWS Infrastructure Setup
 
-1.  **Launch EC2 Instance:**
-    * Navigate to the EC2 Dashboard in your AWS Console.
-    * Launch a new instance with the following settings:
-        * **AMI:** Ubuntu 22.04 LTS
-        * **Instance Type:** `t2.micro` (Free Tier eligible)
-        * **Key Pair:** Create a new key pair and download the `.pem` file. You will need this to SSH into your instance.
+#### Step 1.1: Launch an EC2 Instance
 
-    ![EC2 Instance Launch](assets/ec2-launch.png)
+1.  Log into your **AWS Management Console**.
+2.  Navigate to **EC2** and click **Launch Instance**.
+3.  Choose **Ubuntu Server 22.04 LTS (Free Tier eligible)** as the AMI.
+4.  Select **t2.micro** instance type (Free Tier eligible).
+5.  Create a new key pair or use an existing one (this key will be used for SSH access).
+6.  In **Network Settings**, create a new security group or use an existing one.
 
-2.  **Configure Security Group:**
-    * Create a new security group with the following **inbound rules**:
-        | Type         | Protocol | Port Range | Source        | Description                  |
-        |--------------|----------|------------|---------------|------------------------------|
-        | HTTP         | TCP      | 80         | `0.0.0.0/0`   | Allows web traffic           |
-        | SSH          | TCP      | 22         | `My IP`       | Secure access for you        |
-        | Custom TCP   | TCP      | 50000      | `0.0.0.0/0`   | For Jenkins Agent connection |
+![EC2 Instance Launch](assets/ec2-launch.png)
+*Launching a new EC2 instance with Ubuntu Server*
 
-    ![Security Group Configuration](assets/security-group.png)
+#### Step 1.2: Configure Security Group
 
-3.  **Allocate an Elastic IP:**
-    * In the EC2 dashboard, go to "Elastic IPs".
-    * Allocate a new address and associate it with your newly created EC2 instance. This provides a static public IP.
+1.  In your security group, add the following **Inbound Rules**:
 
-    ![Elastic IP Allocation](assets/elastic-ip.png)
+    | Type         | Protocol | Port Range | Source      | Description                  |
+    | ------------ | -------- | ---------- | ----------- | ---------------------------- |
+    | SSH          | TCP      | 22         | My IP       | SSH access from your machine |
+    | HTTP         | TCP      | 80         | 0.0.0.0/0   | Public web access            |
+    | Custom TCP   | TCP      | 8080       | My IP       | Jenkins Master access        |
+    | Custom TCP   | TCP      | 50000      | My IP       | Jenkins Agent communication  |
 
-4.  **Install Apache and Java on EC2:**
-    * Connect to your EC2 instance using your `.pem` key:
-        ```bash
-        ssh -i /path/to/your-key.pem ubuntu@<YOUR_ELASTIC_IP>
-        ```
-    * Update the package manager and install Apache2 and Java (required for the Jenkins agent):
-        ```bash
-        sudo apt-get update -y
-        sudo apt-get install -y apache2 openjdk-11-jre
-        sudo systemctl start apache2
-        sudo systemctl enable apache2
-        ```
+2.  Click **Launch Instance**.
+
+![Security Group Configuration](assets/screenshot-2025-10-16-18-26-06.png)
+*Security group inbound rules for EC2 instance*
+
+#### Step 1.3: Allocate and Associate an Elastic IP
+
+1.  In the EC2 console, go to **Network & Security > Elastic IPs**.
+2.  Click **Allocate Elastic IP address**.
+3.  Select the newly created Elastic IP and click **Actions > Associate Elastic IP address**.
+4.  Choose your running EC2 instance and associate it.
+
+**Note:** Save this Elastic IP address—it will be the public URL for your website.
+
+![Elastic IP Allocation](assets/screenshot-2025-10-16-18-26-26.png)
+*Allocating and associating an Elastic IP to the EC2 instance*
+
+#### Step 1.4: SSH into the EC2 Instance
+
+```bash
+ssh -i /path/to/your-key.pem ubuntu@<your_ec2_elastic_ip>
+```
+
+#### Step 1.5: Install Apache Web Server
+
+```bash
+sudo apt update
+sudo apt install apache2 -y
+sudo systemctl start apache2
+sudo systemctl enable apache2
+```
+
+Verify installation by visiting `http://<your_ec2_elastic_ip>` in your browser. You should see the Apache default page.
+
+---
 
 ### Part 2: Jenkins Master Setup with Docker
 
-1.  **Run Jenkins Docker Container:**
-    * On your local machine, run the following command to start the Jenkins master:
-        ```bash
-        docker run -d --name jenkins-server \
-          -p 8080:8080 -p 50000:50000 \
-          -v jenkins_home:/var/jenkins_home \
-          jenkins/jenkins:lts-jdk11
-        ```
+#### Step 2.1: Install Docker on Your Local Machine
 
-    ![Jenkins Docker Setup](assets/jenkins-docker.png)
+Follow the official Docker installation guide for your OS: [https://docs.docker.com/get-docker/](https://docs.docker.com/get-docker/)
 
-2.  **Initial Jenkins Setup:**
-    * Get the initial admin password from the container logs:
-        ```bash
-        docker exec jenkins-server cat /var/jenkins_home/secrets/initialAdminPassword
-        ```
-    * Open your browser and navigate to `http://localhost:8080`.
-    * Paste the password, install suggested plugins, and create your admin user.
+#### Step 2.2: Run Jenkins in a Docker Container
 
-    ![Jenkins Initial Setup](assets/jenkins-initial-setup.png)
+```bash
+docker run -d \
+  --name jenkins-master \
+  -p 8080:8080 \
+  -p 50000:50000 \
+  -v jenkins_home:/var/jenkins_home \
+  jenkins/jenkins:lts
+```
+
+This command:
+
+*   Runs Jenkins in a Docker container named `jenkins-master`.
+*   Exposes port `8080` for the Jenkins web UI and port `50000` for agent communication.
+*   Persists Jenkins data in a Docker volume (`jenkins_home`).
+
+![Jenkins Docker Setup](assets/jenkins-docker.png)
+*Jenkins running in a Docker container*
+
+#### Step 2.3: Access Jenkins
+
+1.  Open your browser and go to `http://localhost:8080`.
+2.  Retrieve the initial admin password:
+
+    ```bash
+    docker exec jenkins-master cat /var/jenkins_home/secrets/initialAdminPassword
+    ```
+
+3.  Paste the password into the Jenkins setup page.
+4.  Install the **suggested plugins**.
+5.  Create an admin user and complete the setup.
+
+![Jenkins Initial Setup](assets/screenshot-2025-10-16-18-26-33.png)
+*Jenkins initial setup wizard*
+
+---
 
 ### Part 3: Configure EC2 as a Jenkins Agent Node
 
-1.  **Generate SSH Keys in Jenkins Container:**
-    * Open a shell inside your running Jenkins container:
-        ```bash
-        docker exec -it jenkins-server bash
-        ```
-    * Inside the container, generate an SSH key pair. Press Enter for all prompts:
-        ```bash
-        ssh-keygen -t rsa
-        ```
-    * Display and copy the public key:
-        ```bash
-        cat ~/.ssh/id_rsa.pub
-        ```
+#### Step 3.1: Generate SSH Key Pair on Jenkins Master
 
-    ![SSH Key Generation](assets/ssh-keys.png)
+```bash
+docker exec -it jenkins-master bash
+ssh-keygen -t rsa -b 4096 -f /var/jenkins_home/.ssh/jenkins_agent_key
+cat /var/jenkins_home/.ssh/jenkins_agent_key.pub
+```
 
-2.  **Authorize the Public Key on EC2:**
-    * SSH back into your EC2 instance.
-    * Append the public key you just copied to the `authorized_keys` file:
-        ```bash
-        echo "PASTE_YOUR_PUBLIC_KEY_HERE" >> ~/.ssh/authorized_keys
-        ```
-    * Set the correct permissions for the SSH directory and file:
-        ```bash
-        chmod 700 ~/.ssh
-        chmod 600 ~/.ssh/authorized_keys
-        ```
+Copy the public key output.
 
-3.  **Add the Agent Node in Jenkins UI:**
-    * Go to **Dashboard > Manage Jenkins > Manage Nodes and Clouds > New Node**.
-    * **Node Name:** `aws-ec2-agent`
-    * Select **Permanent Agent**.
-    * **Remote root directory:** `/home/ubuntu/jenkins-agent`
-    * **Launch method:** `Launch agents via SSH`.
-    * **Host:** Your EC2 instance's Elastic IP.
-    * **Credentials:** Click **Add > Jenkins**.
-        * **Kind:** `SSH Username with private key`.
-        * **Username:** `ubuntu`.
-        * **Private Key:** Select `Enter directly` and paste the private key from the Jenkins container (`docker exec jenkins-server cat ~/.ssh/id_rsa`).
-    * **Host Key Verification Strategy:** `Non-verifying Verification Strategy`.
-    * Save and wait for the agent to connect. You should see a "Success" message in the node's logs.
+![SSH Key Generation](assets/ssh-keys.png)
+*Generating SSH keys for Jenkins agent authentication*
 
-    ![Jenkins Agent Configuration](assets/jenkins-agent-config.png)
+#### Step 3.2: Add Public Key to EC2 Instance
+
+SSH into your EC2 instance and append the public key to `~/.ssh/authorized_keys`:
+
+```bash
+echo "<paste_public_key_here>" >> ~/.ssh/authorized_keys
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/authorized_keys
+```
+
+#### Step 3.3: Configure the Jenkins Agent
+
+1.  In Jenkins, go to **Manage Jenkins > Manage Nodes and Clouds**.
+2.  Click **New Node** and give it a name (e.g., `EC2-Agent`).
+3.  Select **Permanent Agent** and click **OK**.
+4.  Configure:
+    *   **Remote root directory:** `/home/ubuntu/jenkins`
+    *   **Labels:** `ec2-agent`
+    *   **Launch method:** `Launch agents via SSH`
+    *   **Host:** `<your_ec2_elastic_ip>`
+    *   **Credentials:** Click **Add > SSH Username with private key**
+        *   **Username:** `ubuntu`
+        *   **Private Key:** Paste the private key from `/var/jenkins_home/.ssh/jenkins_agent_key`
+    *   **Host Key Verification Strategy:** `Non verifying Verification Strategy` (for testing; use a secure method in production)
+5.  Click **Save**.
+
+![Jenkins Agent Configuration](assets/screenshot-2025-10-16-18-26-47.png)
+*Configuring EC2 instance as a Jenkins agent node*
+
+---
 
 ### Part 4: Create the Jenkins Pipeline
 
-1.  **Create a New Pipeline Job:**
-    * In the Jenkins Dashboard, click **New Item**.
-    * Enter a name (e.g., `Static-Site-Deployment`) and select **Pipeline**.
+#### Step 4.1: Create a New Pipeline Job
 
-    ![Jenkins Pipeline Creation](assets/jenkins-pipeline-create.png)
+1.  In Jenkins, click **New Item**.
+2.  Enter a name (e.g., `CI-CD-Pipeline`) and select **Pipeline**.
+3.  Click **OK**.
 
-2.  **Configure the Pipeline:**
-    * In the project configuration page, scroll down to the **Pipeline** section.
-    * **Definition:** `Pipeline script from SCM`.
-    * **SCM:** `Git`.
-    * **Repository URL:** Enter the HTTPS URL of your GitHub repository.
-    * **Branch Specifier:** `*/main` or `*/master`.
-    * **Script Path:** `Jenkinsfile` (this should be the name of the file in your repo).
-    * Save the project.
+![Jenkins Pipeline Creation](assets/screenshot-2025-10-16-18-27-04.png)
+*Creating a new Jenkins pipeline job*
 
-    ![Jenkins Pipeline Configuration](assets/jenkins-pipeline-config.png)
+#### Step 4.2: Configure the Pipeline
+
+1.  Under **Build Triggers**, enable **GitHub hook trigger for GITScm polling**.
+2.  Under **Pipeline**, select **Pipeline script from SCM**.
+3.  Set **SCM** to **Git**.
+4.  Configure:
+    *   **Repository URL:** Enter the HTTPS URL of your GitHub repository.
+    *   **Branch Specifier:** `*/main` or `*/master`.
+    *   **Script Path:** `Jenkinsfile` (this should be the name of the file in your repo).
+5.  Save the project.
+
+![Jenkins Pipeline Configuration](assets/screenshot-2025-10-16-18-34-25.png)
+*Configuring the Jenkins pipeline with GitHub repository*
 
 ---
 
@@ -225,34 +272,34 @@ Once the setup is complete, the pipeline is ready to use:
 1.  **Clone** this repository to your local machine.
 2.  **Make a change** to `index.html` or `styles.css`.
 3.  **Commit and push** the changes to the `main` branch:
+
     ```bash
     git add .
     git commit -m "feat: Updated website content"
     git push origin main
     ```
+
 4.  Watch the pipeline automatically trigger and execute in your Jenkins dashboard. Within a minute, your changes will be live on your EC2 web server!
 
 ---
 
 ## 🔍 Troubleshooting Common Issues
 
-* **Issue:** Jenkins agent fails to connect.
-    * **Solution:** Double-check that the Security Group allows traffic on port 50000. Verify that the SSH public key was correctly added to `authorized_keys` on the EC2 instance and that file permissions (`700` for `.ssh`, `600` for `authorized_keys`) are correct.
-
-* **Issue:** The pipeline fails at the deployment step with "Permission Denied".
-    * **Solution:** The `ubuntu` user may not have permission to write to `/var/www/html`. SSH into the EC2 instance and run `sudo chown -R ubuntu:ubuntu /var/www/html` to grant ownership.
-
-* **Issue:** Git push does not trigger the pipeline.
-    * **Solution:** This requires a GitHub Webhook. Ensure your Jenkins server is publicly accessible. For local setups, use a tool like `ngrok` to expose your `localhost:8080` to the internet and use the `ngrok` URL in your GitHub webhook settings.
+*   **Issue:** Jenkins agent fails to connect.
+    *   **Solution:** Double-check that the Security Group allows traffic on port 50000. Verify that the SSH public key was correctly added to `authorized_keys` on the EC2 instance and that file permissions (`700` for `.ssh`, `600` for `authorized_keys`) are correct.
+*   **Issue:** The pipeline fails at the deployment step with "Permission Denied".
+    *   **Solution:** The `ubuntu` user may not have permission to write to `/var/www/html`. SSH into the EC2 instance and run `sudo chown -R ubuntu:ubuntu /var/www/html` to grant ownership.
+*   **Issue:** Git push does not trigger the pipeline.
+    *   **Solution:** This requires a GitHub Webhook. Ensure your Jenkins server is publicly accessible. For local setups, use a tool like `ngrok` to expose your `localhost:8080` to the internet and use the `ngrok` URL in your GitHub webhook settings.
 
 ---
 
 ## 🔮 Future Enhancements
 
-* **Infrastructure as Code with Terraform:** Use Terraform to provision the entire AWS infrastructure (EC2, Security Groups, Elastic IP) automatically.
-* **Add a Testing Stage:** Incorporate a "Test" stage in the `Jenkinsfile` to run validation checks (e.g., HTML linting, link checking) before deployment.
-* **Enable HTTPS:** Use Let's Encrypt and Certbot to add a free SSL certificate to the Apache server for secure HTTPS traffic.
-* **Dynamic Environments:** Parameterize the Jenkins job to deploy to different environments (e.g., staging, production) based on the branch name.
+*   **Infrastructure as Code with Terraform:** Use Terraform to provision the entire AWS infrastructure (EC2, Security Groups, Elastic IP) automatically.
+*   **Add a Testing Stage:** Incorporate a "Test" stage in the `Jenkinsfile` to run validation checks (e.g., HTML linting, link checking) before deployment.
+*   **Enable HTTPS:** Use Let's Encrypt and Certbot to add a free SSL certificate to the Apache server for secure HTTPS traffic.
+*   **Dynamic Environments:** Parameterize the Jenkins job to deploy to different environments (e.g., staging, production) based on the branch name.
 
 ---
 
